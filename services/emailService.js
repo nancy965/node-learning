@@ -1329,8 +1329,9 @@ async function cancelScheduledEmail({ messageId, userId, userEmail }) {
  * Background worker: Dispatches scheduled emails whose scheduled_at has arrived
  */
 async function processScheduledEmails() {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const res = await client.query(`
       SELECT m.*
       FROM mail_messages m
@@ -1459,7 +1460,7 @@ async function processScheduledEmails() {
   } catch (err) {
     console.error("processScheduledEmails loop error:", err.message);
   } finally {
-    client.release();
+    if (client) client.release();
   }
 }
 
@@ -1528,7 +1529,11 @@ async function unsnoozeEmail({ userId, userEmail, emailId }) {
 }
 
 // Background scheduler interval (checks every 20 seconds)
-const scheduleTimer = setInterval(processScheduledEmails, 20000);
+const scheduleTimer = setInterval(() => {
+  processScheduledEmails().catch((err) => {
+    console.error("Scheduled email worker error:", err.message);
+  });
+}, 20000);
 if (scheduleTimer.unref) scheduleTimer.unref();
 
 module.exports = {

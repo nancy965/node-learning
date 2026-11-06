@@ -12,4 +12,8 @@ const pool = new Pool({
   ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
 });
 
+pool.on("error", (err) => {
+  console.error("Unexpected error on idle database client:", err.message);
+});
+
 module.exports = pool;

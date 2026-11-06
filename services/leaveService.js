@@ -1,4 +1,5 @@
 const pool = require("../config/databse");
+const { decodeUUIDToId } = require("../utils/uuidUtils");
 
 /**
  * Helper: Format date as YYYY-MM-DD
@@ -303,7 +304,11 @@ const getLeaveTransactions = async (employeeId, year, filters = {}) => {
   }
 
   if (filters.leaveTypeId && filters.leaveTypeId !== "All") {
-    params.push(parseInt(filters.leaveTypeId, 10));
+    const decId =
+      typeof filters.leaveTypeId === "string" && filters.leaveTypeId.includes("-")
+        ? decodeUUIDToId(filters.leaveTypeId)
+        : filters.leaveTypeId;
+    params.push(parseInt(decId, 10));
     query += " AND ltx.leave_type_id = $" + params.length;
   }
 
@@ -342,7 +347,11 @@ const applyLeave = async (employeeData, leavePayload) => {
       leavePayload.leaveTypeId !== undefined
         ? leavePayload.leaveTypeId
         : leavePayload.leave_type_id;
-    const leaveTypeId = Number(rawTypeId);
+    const decodedTypeId =
+      typeof rawTypeId === "string" && rawTypeId.includes("-")
+        ? decodeUUIDToId(rawTypeId)
+        : rawTypeId;
+    const leaveTypeId = Number(decodedTypeId);
     const startDate = leavePayload.startDate || leavePayload.start_date;
     const rawEndDate = leavePayload.endDate || leavePayload.end_date;
     // If endDate is omitted or empty, default to startDate for a 1-day leave
@@ -692,7 +701,11 @@ const getAllLeaveRequests = async (filters = {}) => {
   }
 
   if (filters.leaveTypeId) {
-    params.push(parseInt(filters.leaveTypeId, 10));
+    const decId =
+      typeof filters.leaveTypeId === "string" && filters.leaveTypeId.includes("-")
+        ? decodeUUIDToId(filters.leaveTypeId)
+        : filters.leaveTypeId;
+    params.push(parseInt(decId, 10));
     query += " AND lr.leave_type_id = $" + params.length;
   }
 
@@ -1060,7 +1073,11 @@ const getTeamLeaveCalendar = async (year, month, filters = {}) => {
   const leaveParams = [startStr, endStr];
 
   if (filters.leaveTypeId && filters.leaveTypeId !== "All") {
-    leaveParams.push(parseInt(filters.leaveTypeId, 10));
+    const decId =
+      typeof filters.leaveTypeId === "string" && filters.leaveTypeId.includes("-")
+        ? decodeUUIDToId(filters.leaveTypeId)
+        : filters.leaveTypeId;
+    leaveParams.push(parseInt(decId, 10));
     leaveQuery += " AND lr.leave_type_id = $" + leaveParams.length;
   }
 
@@ -1126,8 +1143,13 @@ const adjustEmployeeLeaveBalance = async (adminData, payload) => {
   try {
     await client.query("BEGIN");
     const { adminId, adminName } = adminData;
-    const { employeeId, leaveTypeId, year, days, adjustmentType, reason } =
+    const { employeeId, leaveTypeId: rawLeaveTypeId, year, days, adjustmentType, reason } =
       payload;
+
+    const leaveTypeId =
+      typeof rawLeaveTypeId === "string" && rawLeaveTypeId.includes("-")
+        ? Number(decodeUUIDToId(rawLeaveTypeId))
+        : Number(rawLeaveTypeId);
 
     if (
       !employeeId ||

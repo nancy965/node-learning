@@ -191,7 +191,7 @@ const loginUser = async (email, password) => {
         user.role === "general_admin" ||
         user.role === "admin"
     ) {
-        const adminResult = await pool.query(
+        let adminResult = await pool.query(
             `SELECT
                 a.id,
                 a.name,
@@ -205,6 +205,49 @@ const loginUser = async (email, password) => {
              WHERE a.register_id = $1`,
             [user.id]
         );
+
+        // Self-healing: if admin record is missing for this registered account, link or create it
+        if (adminResult.rows.length === 0) {
+            const adminByEmail = await pool.query(
+                "SELECT id FROM admin WHERE email = $1 LIMIT 1",
+                [user.email]
+            );
+            if (adminByEmail.rows.length > 0) {
+                await pool.query(
+                    "UPDATE admin SET register_id = $1 WHERE id = $2",
+                    [user.id, adminByEmail.rows[0].id]
+                );
+            } else {
+                let adminRoleId = null;
+                const roleRes = await pool.query(
+                    "SELECT id FROM roles WHERE LOWER(name) = LOWER($1) LIMIT 1",
+                    [user.role === "general_admin" ? "General Admin" : "Admin"]
+                );
+                if (roleRes.rows.length > 0) adminRoleId = roleRes.rows[0].id;
+
+                await pool.query(
+                    `INSERT INTO admin
+                    (name, email, age, role, password, is_active, register_id, role_id, lifecycle_status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active')`,
+                    [user.name, user.email, user.age || null, user.role, user.password, true, user.id, adminRoleId]
+                );
+            }
+
+            adminResult = await pool.query(
+                `SELECT
+                    a.id,
+                    a.name,
+                    a.role,
+                    a.role_id,
+                    a.general_admin_id,
+                    r.name AS role_name
+                 FROM admin a
+                 LEFT JOIN roles r
+                    ON r.id = a.role_id
+                 WHERE a.register_id = $1`,
+                [user.id]
+            );
+        }
 
         if (adminResult.rows.length === 0) {
             return {
@@ -246,9 +289,9 @@ const loginUser = async (email, password) => {
         }
     }
 
-    // EMPLOYEE
-    else if (user.role === "employee") {
-        const employeeResult = await pool.query(
+    // EMPLOYEE & OTHER ROLES
+    else {
+        let employeeResult = await pool.query(
             `SELECT
                 u.id,
                 u.name,
@@ -259,10 +302,58 @@ const loginUser = async (email, password) => {
              FROM users u
              LEFT JOIN roles r
                 ON r.id = u.role_id
-             WHERE u.register_id = $1
-             AND u.role = 'employee'`,
+             WHERE u.register_id = $1`,
             [user.id]
         );
+
+        // Self-healing: if employee record is missing for this registered account, link or create it
+        if (employeeResult.rows.length === 0) {
+            const userByEmail = await pool.query(
+                "SELECT id FROM users WHERE email = $1 LIMIT 1",
+                [user.email]
+            );
+            if (userByEmail.rows.length > 0) {
+                await pool.query(
+                    "UPDATE users SET register_id = $1 WHERE id = $2",
+                    [user.id, userByEmail.rows[0].id]
+                );
+            } else {
+                let empRoleId = null;
+                const roleRes = await pool.query(
+                    "SELECT id FROM roles WHERE LOWER(name) = LOWER($1) OR name = 'Employee' ORDER BY (LOWER(name) = LOWER($1)) DESC LIMIT 1",
+                    [user.role || "employee"]
+                );
+                if (roleRes.rows.length > 0) empRoleId = roleRes.rows[0].id;
+
+                let adminId = null;
+                const gaRes = await pool.query(
+                    "SELECT id FROM admin WHERE role = 'general_admin' OR role = 'admin' ORDER BY (role = 'general_admin') DESC, created_at ASC LIMIT 1"
+                );
+                if (gaRes.rows.length > 0) adminId = gaRes.rows[0].id;
+
+                await pool.query(
+                    `INSERT INTO users
+                    (name, email, age, role, password, is_active, register_id, role_id, admin_id, lifecycle_status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Active')`,
+                    [user.name, user.email, user.age || null, user.role || "employee", user.password, true, user.id, empRoleId, adminId]
+                );
+            }
+
+            employeeResult = await pool.query(
+                `SELECT
+                    u.id,
+                    u.name,
+                    u.role,
+                    u.role_id,
+                    u.admin_id,
+                    r.name AS role_name
+                 FROM users u
+                 LEFT JOIN roles r
+                    ON r.id = u.role_id
+                 WHERE u.register_id = $1`,
+                [user.id]
+            );
+        }
 
         if (employeeResult.rows.length === 0) {
             return {
@@ -473,11 +564,56 @@ const registerUser = async (
         ]
     );
 
+    const registeredUser = result.rows[0];
+
+    // Create corresponding profile in admin or users table so login works right away
+    try {
+        if (userRole === "admin" || userRole === "general_admin") {
+            let adminRoleId = null;
+            const roleRes = await pool.query(
+                "SELECT id FROM roles WHERE LOWER(name) = LOWER($1) LIMIT 1",
+                [userRole === "general_admin" ? "General Admin" : "Admin"]
+            );
+            if (roleRes.rows.length > 0) adminRoleId = roleRes.rows[0].id;
+
+            await pool.query(
+                `INSERT INTO admin
+                (name, email, age, role, password, is_active, register_id, role_id, lifecycle_status)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active')
+                ON CONFLICT DO NOTHING`,
+                [name, email, age || null, userRole, hashedPassword, true, registeredUser.id, adminRoleId]
+            );
+        } else {
+            let empRoleId = null;
+            const roleRes = await pool.query(
+                "SELECT id FROM roles WHERE LOWER(name) = LOWER($1) OR name = 'Employee' ORDER BY (LOWER(name) = LOWER($1)) DESC LIMIT 1",
+                [userRole]
+            );
+            if (roleRes.rows.length > 0) empRoleId = roleRes.rows[0].id;
+
+            let adminId = null;
+            const gaRes = await pool.query(
+                "SELECT id FROM admin WHERE role = 'general_admin' OR role = 'admin' ORDER BY (role = 'general_admin') DESC, created_at ASC LIMIT 1"
+            );
+            if (gaRes.rows.length > 0) adminId = gaRes.rows[0].id;
+
+            await pool.query(
+                `INSERT INTO users
+                (name, email, age, role, password, is_active, register_id, role_id, admin_id, lifecycle_status)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Active')
+                ON CONFLICT DO NOTHING`,
+                [name, email, age || null, userRole, hashedPassword, true, registeredUser.id, empRoleId, adminId]
+            );
+        }
+    } catch (profileErr) {
+        console.error("Auto profile creation on register error:", profileErr);
+    }
+
     return {
         success: true,
         status: 201,
         message: "User registered successfully",
-        user: result.rows[0]
+        user: registeredUser
     };
 };
 

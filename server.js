@@ -1,64 +1,28 @@
-const express = require("express");
-const cors = require("cors");
+require("dotenv").config();
 
-const userRoutes = require("./routes/userRoutes");
+const app = require("./app");
+// const { generateDailyTasks } =
+ require("./jobs/taskScheduler");
 
-const app = express();
+const initDatabaseChangeApproval = require("./utils/initDatabaseChangeApproval");
+initDatabaseChangeApproval().catch((err) => console.error("DB Change Schema Init Warning:", err.message));
 
-app.use(cors());
-app.use(express.json());
+const initTaskDependencies = require("./utils/initTaskDependencies");
+initTaskDependencies().catch((err) => console.error("Task Dependencies Schema Init Warning:", err.message));
 
-app.use("/", userRoutes);
+const initEmailCenterSchema = require("./utils/initEmailCenterSchema");
+initEmailCenterSchema().catch((err) => console.error("Email Center Schema Init Warning:", err.message));
 
+const initExpenseSchema = require("./utils/initExpenseSchema");
+initExpenseSchema().catch((err) => console.error("Expense Schema Init Warning:", err.message));
 
+const initLeaveManagementSchema = require("./utils/initLeaveManagementSchema");
+initLeaveManagementSchema().catch((err) => console.error("Leave Management Schema Init Warning:", err.message));
 
-// //Home API
-// app.get("/",(req, res) => {
-//   res.json({
-//     message:"Server Running Successfully"
-//   });
-// });
-
-
-//About API
-// app.get("/about",(req,res) => {
-//     res.json({
-//     name:"Intern Project",
-//     technology: "NodeJs"
-//   });
-// });
-
-// app.get("/student", (req, res) => {
-//     res.json({
-//         name: "Rahul",
-//         age: 22
-//     });
-// });
-
-// app.put("/student/:id", (req, res) => {
-//     const id = req.params.id;
-//     res.json({
-//         message: "Student Updated Successfully",
-//         studentId: id,
-//         updatedData: req.body
-//     });
-// });
-
-// app.delete("/student/:id", (req, res) => {
-//     const id = req.params.id;
-//     res.json({
-//         message: "Student Deleted Successfully",
-//         studentId: id
-//     });
-// });
-
-//Student API
-// app.post("/student",(req,res) => {
-//     res.json({
-//         message: "Student Added Successfully"
-//     });
-// });
-
-app.listen(5000, () => {
-    console.log("Server runnung on http://localhost:5000");
+app.listen(process.env.PORT || 5000, () => {
+  console.log(
+    `Server running on http://localhost:${process.env.PORT || 5000}`
+  );
 });
+
+// generateDailyTasks();
